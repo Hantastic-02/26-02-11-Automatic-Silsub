@@ -19,6 +19,7 @@ Shared_t shared;
 
 /** Semaphore **/
 SemaphoreHandle_t g_status_mutex;   // Mutex
+SemaphoreHandle_t g_trigger;        // Binary Semaphore
 
 /** Main Task: Create Tasks **/
 void main_thread_entry(void *pvParameters)
@@ -28,6 +29,7 @@ void main_thread_entry(void *pvParameters)
     HW_Setting();
 
     g_status_mutex = xSemaphoreCreateMutex();
+    g_trigger = xSemaphoreCreateBinary();
 
     if (g_status_mutex != NULL)
     {
@@ -45,13 +47,15 @@ void Task_Value_Update(void *pvParameters)
 
     for (;;)
     {
-        if (xSemaphoreTake(g_status_mutex, (TickType_t)10) == pdTRUE) {
-            shared.shared_value += 1;
+        if (xSemaphoreTake(g_trigger, portMAX_DELAY) == pdTRUE) {
+            if (xSemaphoreTake(g_status_mutex, (TickType_t)10) == pdTRUE) {
+                shared.shared_value += 1;
 
-            xSemaphoreGive(g_status_mutex);
+                xSemaphoreGive(g_status_mutex);
+            }
+
+            vTaskDelay(pdMS_TO_TICKS(100));
         }
-
-        vTaskDelay(pdMS_TO_TICKS(1000));
     }
 }
 
@@ -81,6 +85,15 @@ void R_IRQ_Interrupt(external_irq_callback_args_t *p_args)
     switch(p_args->channel)
     {
         case 11:
+            if (g_trigger != NULL)
+            {
+                // Set g_ether_trigger=1 to make OS check the Blocked list and wake up the blocked task
+                xSemaphoreGiveFromISR(g_trigger, &xHigherPriorityTaskWoken);
+            }
+
+            // Run the blocked task immediately if xHigherPriorityTaskWoken=pdTRUE
+            portYIELD_FROM_ISR(xHigherPriorityTaskWoken);
+
             break;
 
         case 12:
